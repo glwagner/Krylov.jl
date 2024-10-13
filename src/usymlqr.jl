@@ -109,23 +109,24 @@ def_args_usymlqr = (:(A                    ),
 def_optargs_usymlqr = (:(x0::AbstractVector),
                        :(y0::AbstractVector))
 
-def_kwargs_usymlqr = (:(; M = I                     ),
-                      :(; N = I                     ),
-                      :(; ldiv::Bool = false        ),
-                      :(; atol::T = √eps(T)         ),
-                      :(; rtol::T = √eps(T)         ),
-                      :(; itmax::Int = 0            ),
-                      :(; timemax::Float64 = Inf    ),
-                      :(; verbose::Int = 0          ),
-                      :(; history::Bool = false     ),
-                      :(; callback = solver -> false),
-                      :(; iostream::IO = kstdout    ))
+def_kwargs_usymlqr = (:(; transfer_to_usymcg::Bool = true),
+                      :(; M = I                          ),
+                      :(; N = I                          ),
+                      :(; ldiv::Bool = false             ),
+                      :(; atol::T = √eps(T)              ),
+                      :(; rtol::T = √eps(T)              ),
+                      :(; itmax::Int = 0                 ),
+                      :(; timemax::Float64 = Inf         ),
+                      :(; verbose::Int = 0               ),
+                      :(; history::Bool = false          ),
+                      :(; callback = solver -> false     ),
+                      :(; iostream::IO = kstdout         ))
 
 def_kwargs_usymlqr = mapreduce(extract_parameters, vcat, def_kwargs_usymlqr)
 
 args_usymlqr = (:A, :b, :c)
 optargs_usymlqr = (:x0, :y0)
-kwargs_usymlqr = (:M, :N, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
+kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
 
 @eval begin
   function usymlqr!(solver :: UsymlqrSolver{T,FC,S}, $(def_args_usymlqr...); $(def_kwargs_usymlqr...)) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: AbstractVector{FC}}
@@ -277,7 +278,7 @@ kwargs_usymlqr = (:M, :N, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :hist
         test_LS = ArNorm_qr / (Anorm * max(one(T), rNorm_qr))
         solved_lim_LS = test_LS ≤ ls_optimality_tol
         solved_mach_LS = one(T) + test_LS ≤ one(T)
-        solved_LS = solved_mach_LS | solved_lim_LS
+        solved_LS = solved_mach_LS || solved_lim_LS
       end
       kdisplay(iter, verbose) && @printf(iostream, "%7.1e ", ArNorm_qr)
 
@@ -309,7 +310,7 @@ kwargs_usymlqr = (:M, :N, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :hist
         test_LS = rNorm_qr / (one(T) + Anorm * xNorm)
         zero_resid_lim_LS = test_LS ≤ ls_zero_resid_tol
         zero_resid_mach_LS = one(T) + test_LS ≤ one(T)
-        zero_resid_LS = zero_resid_mach_LS | zero_resid_lim_LS
+        zero_resid_LS = zero_resid_mach_LS || zero_resid_lim_LS
         solved_LS |= zero_resid_LS
 
       end
@@ -388,7 +389,7 @@ kwargs_usymlqr = (:M, :N, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :hist
             #   transition_to_cg = false
             # end
 
-            if transition_to_cg
+            if transfer_to_usymcg
               # @. yC = y + etabar* pbar
               # @. zC = z - etabar* wbar
             end
