@@ -615,6 +615,24 @@
         @test inplace_trimr_bytes == 0
       end
 
+      @testset "USYMLQR" begin
+        # USYMLQR needs:
+        # - _ n-vectors: ...
+        # - _ m-vectors: ...
+        storage_usymlqr(m, n) = 0 * n + 0 * m
+        storage_usymlqr_bytes(m, n) = nbits_FC * storage_usymlqr(m, n)
+
+        expected_usymlqr_bytes = storage_usymlqr_bytes(k, n)
+        usymlqr(Au, c, b)  # warmup
+        actual_usymlqr_bytes = @allocated usymlqr(Au, c, b)
+        @test expected_usymlqr_bytes ≤ actual_usymlqr_bytes ≤ 1.02 * expected_usymlqr_bytes
+
+        solver = UsymlqrSolver(Au, c)
+        usymlqr!(solver, Au, c, b)  # warmup
+        inplace_usymlqr_bytes = @allocated usymlqr!(solver, Au, c, b)
+        @test inplace_usymlqr_bytes == 0
+      end
+
       @testset "GPMR" begin
         # GPMR needs:
         # - 2 m-vectors: x, q
