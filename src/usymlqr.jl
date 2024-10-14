@@ -122,7 +122,7 @@ def_kwargs_usymlqr = (:(; transfer_to_usymcg::Bool = true),
                       :(; callback = solver -> false     ),
                       :(; iostream::IO = kstdout         ))
 
-def_kwargs_usymlqr = mapreduce(extract_parameters, vcat, def_kwargs_usymlqr)
+def_kwargs_usymlqr = extract_parameters.(def_kwargs_usymlqr)
 
 args_usymlqr = (:A, :b, :c)
 optargs_usymlqr = (:x0, :y0)
@@ -172,8 +172,6 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
     itmax == 0 && (itmax = n+m)
 
     # Initial solutions x₀ and y₀.
-    warm_start && (Δx .= xₖ)
-    warm_start && (Δy .= yₖ)
     xₖ .= zero(T)
     yₖ .= zero(T)
 
@@ -264,29 +262,14 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
 
       # Continue the QR factorization of Tₖ₊₁.ₖ = Qₖ₊₁ [ Rₖ ].
       #                                                [ Oᴴ ]
-
       ƛ = -cs * γₖ
       ϵ =  sn * γₖ
-
-      if !solved_LS
-        ArNorm_qr_computed = rNorm_qr * sqrt(δbar^2 + ƛ^2)
-        ArNorm_qr = norm(A' * (b - A * x))  # FIXME
-        @debug "" ArNorm_qr_computed ArNorm_qr abs(ArNorm_qr_computed - ArNorm_qr) / ArNorm_qr
-        ArNorm_qr = ArNorm_qr_computed
-        push!(ArNorms_qr, ArNorm_qr)
-
-        test_LS = ArNorm_qr / (Anorm * max(one(T), rNorm_qr))
-        solved_lim_LS = test_LS ≤ ls_optimality_tol
-        solved_mach_LS = one(T) + test_LS ≤ one(T)
-        solved_LS = solved_mach_LS || solved_lim_LS
-      end
-      kdisplay(iter, verbose) && @printf(iostream, "%7.1e ", ArNorm_qr)
 
       # continue QR factorization
       delta = sqrt(δbar^2 + βₖ^2)
       csold = cs
       snold = sn
-      cs = δbar/ delta
+      cs = δbar / delta
       sn = βₖ / delta
 
       # update w (used to update x and z)
@@ -294,6 +277,19 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
       @. w = cs * wbar
 
       if !solved_LS
+        ArNorm_qr_computed = rNorm_qr * sqrt(δbar^2 + ƛ^2)
+        ArNorm_qr = norm(A' * (b - A * x))  # FIXME
+        @debug "" ArNorm_qr_computed ArNorm_qr abs(ArNorm_qr_computed - ArNorm_qr) / ArNorm_qr
+        ArNorm_qr = ArNorm_qr_computed
+        # push!(ArNorms_qr, ArNorm_qr)
+
+        test_LS = ArNorm_qr / (Anorm * max(one(T), rNorm_qr))
+        solved_lim_LS = test_LS ≤ ls_optimality_tol
+        solved_mach_LS = one(T) + test_LS ≤ one(T)
+        solved_LS = solved_mach_LS || solved_lim_LS
+
+        kdisplay(iter, verbose) && @printf(iostream, "%7.1e ", ArNorm_qr)
+
         # the optimality conditions of the LS problem were not triggerred
         # update x and see if we have a zero residual
 
@@ -304,7 +300,7 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
 
         # update least-squares residual
         rNorm_qr = abs(ϕbar)
-        push!(rNorms_qr, rNorm_qr)
+        # push!(rNorms_qr, rNorm_qr)
 
         # stopping conditions related to the least-squares problem
         test_LS = rNorm_qr / (one(T) + Anorm * xNorm)
@@ -329,21 +325,21 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
       sigma_max = max(delta, sigma_max)
       Acond = sigma_max / sigma_min
 
-      # continue QR factorization of T{k+1,k}
+      # continue QR factorization of Tₖ₊₁.ₖ
       λ = cs * ƛ + sn * αₖ
-      δbar= sn * ƛ - cs * αₖ
+      δbar = sn * ƛ - cs * αₖ
 
       if !solved_LN
 
         etaold = η
         η = cs * etabar # = etak
 
-        # compute residual of least-norm problem at y{k-1}
+        # compute residual of least-norm problem at yₖ₋₁
         # TODO: use recurrence formula for LQ residual
         rNorm_lq_computed = sqrt((delta * η)^2 + (ϵ * etaold)^2)
         rNorm_lq = norm(A' * y - c)  # FIXME
         rNorm_lq = rNorm_lq_computed
-        push!(rNorms_lq, rNorm_lq)
+        # push!(rNorms_lq, rNorm_lq)
 
         # stopping conditions related to the least-norm problem
         test_LN = rNorm_lq / sqrt(cnorm^2 + Anorm2 * yNorm2)
@@ -352,7 +348,7 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
         solved_LN = solved_lim_LN || solved_mach_LN
 
         # TODO: remove this when finished
-        push!(tests_LN, test_LN)
+        # push!(tests_LN, test_LN)
 
         @. wbar = (vₖ - λ * w - ϵ * wold) / δbar
 
@@ -384,7 +380,7 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
             # test_cg = rNorm_cg / sqrt(γ₁^2 + Anorm2 * yCNorm2)
             #   solved_lim_LN = test_cg ≤ ln_tol
             #   solved_mach_LN = 1.0 + test_cg ≤ 1.0
-            #   solved_LN = solved_lim_LN | solved_mach_LN
+            #   solved_LN = solved_lim_LN || solved_mach_LN
             #   # transition_to_cg = solved_LN
             #   transition_to_cg = false
             # end
