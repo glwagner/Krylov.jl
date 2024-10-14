@@ -215,6 +215,7 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
     kdisplay(iter, verbose) && @printf(iostream, "%4d %7.1e %7.1e %7.1e\n", iter, αₖ, βₖ, γₖ)
 
     # Stopping criterion.
+    rNorm = β₁
     solved = rNorm ≤ ε
     tired = iter ≥ itmax
     status = "unknown"
