@@ -203,8 +203,10 @@ kwargs_usymlq = (:transfer_to_usymcg, :atol, :rtol, :itmax, :timemax, :verbose, 
 
       αₖ = @kdot(m, vₖ, q)      # αₖ = ⟨vₖ,q⟩
 
-      @kaxpy!(m, -     αₖ , vₖ, q)    # q ← q - αₖ * vₖ
-      @kaxpy!(n, -conj(αₖ), uₖ, p)    # p ← p - ᾱₖ * uₖ
+      if iter ≥ 2
+        @kaxpy!(m, -     αₖ , vₖ, q)    # q ← q - αₖ * vₖ
+        @kaxpy!(n, -conj(αₖ), uₖ, p)    # p ← p - ᾱₖ * uₖ
+      end
 
       βₖ₊₁ = @knrm2(m, q)       # βₖ₊₁ = ‖q‖
       γₖ₊₁ = @knrm2(n, p)       # γₖ₊₁ = ‖p‖
@@ -281,7 +283,7 @@ kwargs_usymlq = (:transfer_to_usymcg, :atol, :rtol, :itmax, :timemax, :verbose, 
         @kaxpby!(n, -cₖ, uₖ, conj(sₖ), d̅)
       end
 
-      # Compute uₖ₊₁ and uₖ₊₁.
+      # Compute vₖ₊₁ and uₖ₊₁.
       @kcopy!(m, vₖ, vₖ₋₁)  # vₖ₋₁ ← vₖ
       @kcopy!(n, uₖ, uₖ₋₁)  # uₖ₋₁ ← uₖ
 

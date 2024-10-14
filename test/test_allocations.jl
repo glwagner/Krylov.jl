@@ -617,9 +617,9 @@
 
       @testset "USYMLQR" begin
         # USYMLQR needs:
-        # - _ n-vectors: ...
-        # - _ m-vectors: ...
-        storage_usymlqr(m, n) = 0 * n + 0 * m
+        # - 7 n-vectors: x, z, N⁻¹vₖ₋₁, N⁻¹vₖ, p, wₖ₋₂, wₖ₋₁
+        # - 6 m-vectors: r, y, M⁻¹uₖ₋₁, M⁻¹uₖ, q, d̅
+        storage_usymlqr(m, n) = 7 * n + 6 * m
         storage_usymlqr_bytes(m, n) = nbits_FC * storage_usymlqr(m, n)
 
         expected_usymlqr_bytes = storage_usymlqr_bytes(k, n)

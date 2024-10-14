@@ -154,12 +154,14 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
     Aᴴ = A'
 
     # Set up workspace.
-    allocate_if(!MisI, solver, :vₖ, S, m)
-    allocate_if(!NisI, solver, :uₖ, S, n)
-    M⁻¹vₖ₋₁, M⁻¹vₖ, N⁻¹uₖ₋₁, N⁻¹uₖ = solver.M⁻¹vₖ₋₁, solver.M⁻¹vₖ, solver.N⁻¹uₖ₋₁, solver.N⁻¹uₖ
-    xₖ, yₖ, p, q = solver.x, solver.y, solver.p, solver.q
-    vₖ = MisI ? M⁻¹vₖ : solver.vₖ
-    uₖ = NisI ? N⁻¹uₖ : solver.uₖ
+    allocate_if(!MisI, solver, :uₖ, S, m)
+    allocate_if(!NisI, solver, :vₖ, S, n)
+    Δxz, Δry = solver.Δx, solver.Δy
+    M⁻¹uₖ₋₁, M⁻¹uₖ, N⁻¹vₖ₋₁, N⁻¹vₖ = solver.M⁻¹uₖ₋₁, solver.M⁻¹uₖ, solver.N⁻¹vₖ₋₁, solver.N⁻¹vₖ
+    rₖ, xₖ, yₖ, zₖ, p, q = solver.r, solver.x, solver.y, solver.z, solver.p, solver.q
+    d̅, wₖ₋₂, wₖ₋₁ = solver.d̅, solver.wₖ₋₂, solver.wₖ₋₁
+    uₖ = MisI ? M⁻¹uₖ : solver.uₖ
+    vₖ = NisI ? N⁻¹vₖ : solver.vₖ
     warm_start = solver.warm_start
     b₀ = warm_start ? q : b
     c₀ = warm_start ? p : c
@@ -176,8 +178,8 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
     yₖ .= zero(T)
 
     # Initialize preconditioned orthogonal tridiagonalization process.
-    M⁻¹vₖ₋₁ .= zero(T)  # v₀ = 0
-    N⁻¹uₖ₋₁ .= zero(T)  # u₀ = 0
+    M⁻¹uₖ₋₁ .= zero(T)  # u₀ = 0
+    N⁻¹vₖ₋₁ .= zero(T)  # v₀ = 0
 
     # [ I   A ] [ xₖ ] = [ b -   Δx - AΔy ] = [ b₀ ]
     # [ Aᴴ    ] [ yₖ ]   [ c - AᴴΔx       ]   [ c₀ ]
@@ -189,235 +191,317 @@ kwargs_usymlqr = (:transfer_to_usymcg, :M, :N, :ldiv, :atol, :rtol, :itmax, :tim
       @kaxpby!(n, one(T), c, -one(T), c₀)
     end
 
-    # β₁Ev₁ = b ↔ β₁v₁ = Mb
-    M⁻¹vₖ .= b₀
-    MisI || mul!(vₖ, M, M⁻¹vₖ)
-    βₖ = sqrt(@kdot(m, vₖ, M⁻¹vₖ))  # β₁ = ‖v₁‖_E
+    # β₁Eu₁ = b ↔ β₁u₁ = Mb
+    M⁻¹uₖ .= b₀
+    MisI || mul!(uₖ, M, M⁻¹uₖ)
+    βₖ = sqrt(@kdot(m, uₖ, M⁻¹uₖ))  # β₁ = ‖u₁‖_E
     if βₖ ≠ 0
-      @kscal!(m, 1 / βₖ, M⁻¹vₖ)
-      MisI || @kscal!(m, 1 / βₖ, vₖ)
+      @kscal!(m, 1 / βₖ, M⁻¹uₖ)
+      MisI || @kscal!(m, 1 / βₖ, uₖ)
     else
       error("b must be nonzero")
     end
 
-    # γ₁Fu₁ = c ↔ γ₁u₁ = Nc
-    N⁻¹uₖ .= c₀
-    NisI || mul!(uₖ, N, N⁻¹uₖ)
-    γₖ = sqrt(@kdot(n, uₖ, N⁻¹uₖ))  # γ₁ = ‖u₁‖_F
+    # γ₁Fv₁ = c ↔ γ₁v₁ = Nc
+    N⁻¹vₖ .= c₀
+    NisI || mul!(vₖ, N, N⁻¹vₖ)
+    γₖ = sqrt(@kdot(n, vₖ, N⁻¹vₖ))  # γ₁ = ‖v₁‖_F
     if γₖ ≠ 0
-      @kscal!(n, 1 / γₖ, N⁻¹uₖ)
-      NisI || @kscal!(n, 1 / γₖ, uₖ)
+      @kscal!(n, 1 / γₖ, N⁻¹vₖ)
+      NisI || @kscal!(n, 1 / γₖ, vₖ)
     else
       error("c must be nonzero")
     end
 
+    ε = atol + rtol * rNorm
+    κ = zero(T)
     (verbose > 0) && @printf(iostream, "%4s %7s %7s %7s\n", "k", "αₖ", "βₖ", "γₖ")
     kdisplay(iter, verbose) && @printf(iostream, "%4d %7.1e %7.1e %7.1e\n", iter, αₖ, βₖ, γₖ)
 
+    cₖ₋₂ = cₖ₋₁ = cₖ = one(T)    # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
+    sₖ₋₂ = sₖ₋₁ = sₖ = zero(FC)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
+    wₖ₋₂ .= zero(FC)             # Column k-2 of Wₖ = Vₖ(Rₖ)⁻¹
+    wₖ₋₁ .= zero(FC)             # Column k-1 of Wₖ = Vₖ(Rₖ)⁻¹
+    ϕbarₖ = βₖ                   # ϕbarₖ is the last component of f̄ₖ = (Qₖ)ᴴβ₁e₁
+    d̅ .= zero(FC)                # Last column of D̅ₖ = UₖQₖ
+    ηₖ₋₁ = ηbarₖ = zero(FC)      # ηₖ₋₁ and ηbarₖ are the last components of h̄ₖ = (Rₖ)⁻ᵀγ₁e₁
+    ηₖ₋₂ = θₖ = zero(FC)         # ζₖ₋₂ and θₖ are used to update ηₖ₋₁ and ηbarₖ
+    δbarₖ₋₁ = δbarₖ = zero(FC)   # Coefficients of Rₖ₋₁ and Rₖ modified over the course of two iterations
+
     # Stopping criterion.
-    rNorm = β₁
-    solved = rNorm ≤ ε
+    rNorm_LS = β₁
+    rNorm_LN = γ₁
+    solved_LS = rNorm_LS ≤ ε
+    solved_LN = rNorm_LN ≤ ε
+    solved = solved_LS && solved_LN
+    inconsistent = false
     tired = iter ≥ itmax
     status = "unknown"
     ill_cond = false
     user_requested_exit = false
     overtimed = false
 
-    while !(solved || tired || ill_cond || user_requested_exit || overtimed)
+    while !(solved || tired || ill_cond || inconsistent || user_requested_exit || overtimed)
       # Update iteration index.
       iter = iter + 1
 
-      # Continue the orthogonal tridiagonalization process.
-      # AUₖ  = EVₖTₖ    + βₖ₊₁Evₖ₊₁(eₖ)ᵀ = EVₖ₊₁Tₖ₊₁.ₖ
-      # AᴴVₖ = FUₖ(Tₖ)ᴴ + γₖ₊₁Fuₖ₊₁(eₖ)ᵀ = FUₖ₊₁(Tₖ.ₖ₊₁)ᴴ
+      # Continue the SSY tridiagonalization process.
+      # AVₖ  = EUₖTₖ    + βₖ₊₁Euₖ₊₁(eₖ)ᵀ = EUₖ₊₁Tₖ₊₁.ₖ
+      # AᴴUₖ = FVₖ(Tₖ)ᴴ + γₖ₊₁Fvₖ₊₁(eₖ)ᵀ = FVₖ₊₁(Tₖ.ₖ₊₁)ᴴ
 
-      mul!(q, A , uₖ)  # Forms Evₖ₊₁ : q ← Auₖ
-      mul!(p, Aᴴ, vₖ)  # Forms Fuₖ₊₁ : p ← Aᴴvₖ
+      mul!(q, A , vₖ)  # Forms Euₖ₊₁ : q ← Avₖ
+      mul!(p, Aᴴ, uₖ)  # Forms Fvₖ₊₁ : p ← Aᴴuₖ
 
       if iter ≥ 2
-        @kaxpy!(m, -γₖ, M⁻¹vₖ₋₁, q)  # q ← q - γₖ * M⁻¹vₖ₋₁
-        @kaxpy!(n, -βₖ, N⁻¹uₖ₋₁, p)  # p ← p - βₖ * N⁻¹uₖ₋₁
+        @kaxpy!(m, -γₖ, M⁻¹uₖ₋₁, q) # q ← q - γₖ * M⁻¹uₖ₋₁
+        @kaxpy!(n, -βₖ, N⁻¹vₖ₋₁, p) # p ← p - βₖ * N⁻¹vₖ₋₁
       end
 
-      αₖ = @kdot(m, vₖ, q)  # αₖ = qᴴvₖ
+      αₖ = @kdot(m, uₖ, q)  # αₖ = ⟨uₖ,q⟩
 
-      @kaxpy!(m, -αₖ, M⁻¹vₖ, q)  # q ← q - αₖ * M⁻¹vₖ
-      @kaxpy!(n, -αₖ, N⁻¹uₖ, p)  # p ← p - αₖ * N⁻¹uₖ
+      @kaxpy!(m, -     αₖ , M⁻¹uₖ, q)   # q ← q - αₖ * M⁻¹uₖ
+      @kaxpy!(n, -conj(αₖ), N⁻¹vₖ, p)   # p ← p - ᾱₖ * N⁻¹vₖ
 
       # Compute vₖ₊₁ and uₖ₊₁
-      MisI || mul!(vₖ₊₁, M, q)  # βₖ₊₁vₖ₊₁ = MAuₖ  - γₖvₖ₋₁ - αₖvₖ
-      NisI || mul!(uₖ₊₁, N, p)  # γₖ₊₁uₖ₊₁ = NAᴴvₖ - βₖuₖ₋₁ - αₖuₖ
+      MisI || mulorldiv!(uₖ₊₁, M, q, ldiv)  # βₖ₊₁uₖ₊₁ = MAvₖ  - γₖuₖ₋₁ - αₖuₖ
+      NisI || mulorldiv!(vₖ₊₁, N, p, ldiv)  # γₖ₊₁vₖ₊₁ = NAᴴuₖ - βₖvₖ₋₁ - ᾱₖvₖ
 
-      βₖ₊₁ = sqrt(@kdot(m, vₖ₊₁, q))  # βₖ₊₁ = ‖vₖ₊₁‖_E
-      γₖ₊₁ = sqrt(@kdot(n, uₖ₊₁, p))  # γₖ₊₁ = ‖uₖ₊₁‖_F
+      βₖ₊₁ = sqrt(@kdotr(m, uₖ₊₁, q))  # βₖ₊₁ = ‖uₖ₊₁‖_E
+      γₖ₊₁ = sqrt(@kdotr(n, vₖ₊₁, p))  # γₖ₊₁ = ‖vₖ₊₁‖_F
 
-      if βₖ₊₁ ≠ 0
-        @kscal!(m, one(T) / βₖ₊₁, q)
-        MisI || @kscal!(m, one(T) / βₖ₊₁, vₖ₊₁)
+      # Update M⁻¹uₖ₋₁ and N⁻¹vₖ₋₁
+      M⁻¹uₖ₋₁ .= M⁻¹uₖ
+      N⁻¹vₖ₋₁ .= N⁻¹vₖ
+
+      # Update the QR factorization of Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
+      #                                            [ Oᵀ ]
+      # [ α₁ γ₂ 0  •  •  •   0  ]      [ δ₁ λ₁ ϵ₁ 0  •  •  0  ]
+      # [ β₂ α₂ γ₃ •         •  ]      [ 0  δ₂ λ₂ •  •     •  ]
+      # [ 0  •  •  •  •      •  ]      [ •  •  δ₃ •  •  •  •  ]
+      # [ •  •  •  •  •  •   •  ] = Qₖ [ •     •  •  •  •  0  ]
+      # [ •     •  •  •  •   0  ]      [ •        •  •  • ϵₖ₋₂]
+      # [ •        •  •  •   γₖ ]      [ •           •  • λₖ₋₁]
+      # [ •           •  βₖ  αₖ ]      [ 0  •  •  •  •  0  δₖ ]
+      # [ 0  •  •  •  •  0  βₖ₊₁]      [ 0  •  •  •  •  •  0  ]
+      #
+      # If k = 1, we don't have any previous reflexion.
+      # If k = 2, we apply the last reflexion.
+      # If k ≥ 3, we only apply the two previous reflexions.
+
+      # Apply previous Givens reflections Qₖ₋₂.ₖ₋₁
+      if iter ≥ 3
+        # [cₖ₋₂  sₖ₋₂] [0 ] = [  ϵₖ₋₂ ]
+        # [s̄ₖ₋₂ -cₖ₋₂] [γₖ]   [λbarₖ₋₁]
+        ϵₖ₋₂    =  sₖ₋₂ * γₖ
+        λbarₖ₋₁ = -cₖ₋₂ * γₖ
       end
 
-      if γₖ₊₁ ≠ 0
-        @kscal!(n, one(T) / γₖ₊₁, p)
-        NisI || @kscal!(n, one(T) / γₖ₊₁, uₖ₊₁)
+      # Apply previous Givens reflections Qₖ₋₁.ₖ
+      if iter ≥ 2
+        iter == 2 && (λbarₖ₋₁ = γₖ)
+        # [cₖ₋₁  sₖ₋₁] [λbarₖ₋₁] = [λₖ₋₁ ]
+        # [s̄ₖ₋₁ -cₖ₋₁] [   αₖ  ]   [δbarₖ]
+        λₖ₋₁  =      cₖ₋₁  * λbarₖ₋₁ + sₖ₋₁ * αₖ
+        δbarₖ = conj(sₖ₋₁) * λbarₖ₋₁ - cₖ₋₁ * αₖ
       end
 
-      # Continue the QR factorization of Tₖ₊₁.ₖ = Qₖ₊₁ [ Rₖ ].
-      #                                                [ Oᴴ ]
-      ƛ = -cs * γₖ
-      ϵ =  sn * γₖ
+      # Compute and apply current Givens reflection Qₖ.ₖ₊₁
+      iter == 1 && (δbarₖ = αₖ)
+      # [cₖ  sₖ] [δbarₖ] = [δₖ]
+      # [s̄ₖ -cₖ] [βₖ₊₁ ]   [0 ]
+      (cₖ, sₖ, δₖ) = sym_givens(δbarₖ, βₖ₊₁)
 
-      # continue QR factorization
-      delta = sqrt(δbar^2 + βₖ^2)
-      csold = cs
-      snold = sn
-      cs = δbar / delta
-      sn = βₖ / delta
+      # Compute f̄ₖ₊₁ = [   fₖ  ] = (Qₖ)ᴴβ₁e₁
+      #                [ϕbarₖ₊₁]
+      #
+      # [cₖ  sₖ] [ϕbarₖ] = [   ϕₖ  ]
+      # [s̄ₖ -cₖ] [  0  ]   [ϕbarₖ₊₁]
+      ϕₖ      =      cₖ  * ϕbarₖ
+      ϕbarₖ₊₁ = conj(sₖ) * ϕbarₖ
 
-      # update w (used to update x and z)
-      @. wold = w
-      @. w = cs * wbar
-
-      if !solved_LS
-        ArNorm_qr_computed = rNorm_qr * sqrt(δbar^2 + ƛ^2)
-        ArNorm_qr = norm(A' * (b - A * x))  # FIXME
-        @debug "" ArNorm_qr_computed ArNorm_qr abs(ArNorm_qr_computed - ArNorm_qr) / ArNorm_qr
-        ArNorm_qr = ArNorm_qr_computed
-        # push!(ArNorms_qr, ArNorm_qr)
-
-        test_LS = ArNorm_qr / (Anorm * max(one(T), rNorm_qr))
-        solved_lim_LS = test_LS ≤ ls_optimality_tol
-        solved_mach_LS = one(T) + test_LS ≤ one(T)
-        solved_LS = solved_mach_LS || solved_lim_LS
-
-        kdisplay(iter, verbose) && @printf(iostream, "%7.1e ", ArNorm_qr)
-
-        # the optimality conditions of the LS problem were not triggerred
-        # update x and see if we have a zero residual
-
-        ϕ = cs * ϕbar
-        ϕbar = sn * ϕbar
-        @kaxpy!(n, ϕ, w, x)
-        xNorm = norm(x)  # FIXME
-
-        # update least-squares residual
-        rNorm_qr = abs(ϕbar)
-        # push!(rNorms_qr, rNorm_qr)
-
-        # stopping conditions related to the least-squares problem
-        test_LS = rNorm_qr / (one(T) + Anorm * xNorm)
-        zero_resid_lim_LS = test_LS ≤ ls_zero_resid_tol
-        zero_resid_mach_LS = one(T) + test_LS ≤ one(T)
-        zero_resid_LS = zero_resid_mach_LS || zero_resid_lim_LS
-        solved_LS |= zero_resid_LS
-
+      # Compute the direction wₖ, the last column of Wₖ = Vₖ(Rₖ)⁻¹ ⟷ (Rₖ)ᵀ(Wₖ)ᵀ = (Vₖ)ᵀ.
+      # w₁ = v₁ / δ₁
+      if iter == 1
+        wₖ = wₖ₋₁
+        @kaxpy!(n, one(FC), vₖ, wₖ)
+        wₖ .= wₖ ./ δₖ
+      end
+      # w₂ = (v₂ - λ₁w₁) / δ₂
+      if iter == 2
+        wₖ = wₖ₋₂
+        @kaxpy!(n, -λₖ₋₁, wₖ₋₁, wₖ)
+        @kaxpy!(n, one(FC), vₖ, wₖ)
+        wₖ .= wₖ ./ δₖ
+      end
+      # wₖ = (vₖ - λₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / δₖ
+      if iter ≥ 3
+        @kscal!(n, -ϵₖ₋₂, wₖ₋₂)
+        wₖ = wₖ₋₂
+        @kaxpy!(n, -λₖ₋₁, wₖ₋₁, wₖ)
+        @kaxpy!(n, one(FC), vₖ, wₖ)
+        wₖ .= wₖ ./ δₖ
       end
 
-      # continue tridiagonalization
-      q = A * vₖ
-      @. q -= γₖ * u_prev
-      αₖ = @kdot(m, uₖ, q)
+      # Update the solution xₖ.
+      # xₖ ← xₖ₋₁ + ϕₖ * wₖ
+      @kaxpy!(n, ϕₖ, wₖ, xₖ)
 
-      # Update norm estimates
-      Anorm2 += αₖ * αₖ + βₖ * βₖ + γₖ * γₖ
-      Anorm = √Anorm2
+      # Update the residual rₖ.
+      # rₖ ← |sₖ|² * rₖ₋₁ - cₖ * ϕbarₖ₊₁ * uₖ₊₁
+      @kaxpby!(n, cₖ * ϕbarₖ₊₁, q, abs2(sₖ), rₖ)
 
-      # Estimate κ₂(A) based on the diagonal of L.
-      sigma_min = min(delta, sigma_min)
-      sigma_max = max(delta, sigma_max)
-      Acond = sigma_max / sigma_min
+      # Compute ‖rₖ‖ = |ϕbarₖ₊₁|.
+      rNorm = abs(ϕbarₖ₊₁)
+      history && push!(rNorms, rNorm)
 
-      # continue QR factorization of Tₖ₊₁.ₖ
-      λ = cs * ƛ + sn * αₖ
-      δbar = sn * ƛ - cs * αₖ
+      # Compute ‖Aᴴrₖ₋₁‖ = |ϕbarₖ| * √(|δbarₖ|² + |λbarₖ|²).
+      AᴴrNorm = abs(ϕbarₖ) * √(abs2(δbarₖ) + abs2(cₖ₋₁ * γₖ₊₁))
+      history && push!(AᴴrNorms, AᴴrNorm)
 
-      if !solved_LN
-
-        etaold = η
-        η = cs * etabar # = etak
-
-        # compute residual of least-norm problem at yₖ₋₁
-        # TODO: use recurrence formula for LQ residual
-        rNorm_lq_computed = sqrt((delta * η)^2 + (ϵ * etaold)^2)
-        rNorm_lq = norm(A' * y - c)  # FIXME
-        rNorm_lq = rNorm_lq_computed
-        # push!(rNorms_lq, rNorm_lq)
-
-        # stopping conditions related to the least-norm problem
-        test_LN = rNorm_lq / sqrt(cnorm^2 + Anorm2 * yNorm2)
-        solved_lim_LN = test_LN ≤ ln_tol
-        solved_mach_LN = one(T) + test_LN ≤ one(T)
-        solved_LN = solved_lim_LN || solved_mach_LN
-
-        # TODO: remove this when finished
-        # push!(tests_LN, test_LN)
-
-        @. wbar = (vₖ - λ * w - ϵ * wold) / δbar
-
-        if !solved_LN
-
-            # prepare to update y and z
-            @. p = cs * pbar + sn * uₖ
-
-            # update y and z
-            @. y += η * p
-            @. z -= η * w
-            yNorm2 += η * η
-            yNorm = sqrt(yNorm2)
-
-            @. pbar = sn * pbar - cs * uₖ
-            etabarold = etabar
-            etabar = -(λ * η + ϵ * etaold) / δbar # = etabar{k+1}
-
-            # see if CG iterate has smaller residual
-            # TODO: use recurrence formula for CG residual
-            @. yC = y + etabar * pbar
-            @. zC = z - etabar * wbar
-            yCNorm2 = yNorm2 + etabar* etabar
-            rNorm_cg_computed = γₖ * abs(snold * etaold - csold * etabarold)
-            rNorm_cg = norm(A' * yC - c)
-
-            # if rNorm_cg < rNorm_lq
-            #   # stopping conditions related to the least-norm problem
-            # test_cg = rNorm_cg / sqrt(γ₁^2 + Anorm2 * yCNorm2)
-            #   solved_lim_LN = test_cg ≤ ln_tol
-            #   solved_mach_LN = 1.0 + test_cg ≤ 1.0
-            #   solved_LN = solved_lim_LN || solved_mach_LN
-            #   # transition_to_cg = solved_LN
-            #   transition_to_cg = false
-            # end
-
-            if transfer_to_usymcg
-              # @. yC = y + etabar* pbar
-              # @. zC = z - etabar* wbar
-            end
-        end
+      # Compute ηₖ₋₁ and ηbarₖ, last components of the solution of (Rₖ)ᵀh̄ₖ = γ₁e₁
+      # [δbar₁] [ηbar₁] = [γ₁]
+      if iter == 1
+        ωₖ = γₖ
       end
-      kdisplay(iter, verbose) && @printf(iostream, "%7.1e\n", rNorm_lq)
-      kdisplay(iter, verbose) && @printf(iostream, "%4d %8.1e %7.1e %7.1e %7.1e %7.1e %7.1e ", iter, αₖ, βₖ, γₖ, Anorm, Acond, rNorm_qr)
+      # [δ₁    0  ] [  η₁ ] = [γ₁]
+      # [λ₁  δbar₂] [ηbar₂]   [0 ]
+      if iter == 2
+        ωₖ₋₁ = ηₖ
+        ηₖ₋₁ = ηₖ₋₁ / δₖ₋₁
+        ωₖ   = -λₖ₋₁ * ζₖ₋₁
+      end
+      # [λₖ₋₂  δₖ₋₁    0  ] [ηₖ₋₂ ] = [0]
+      # [ϵₖ₋₂  λₖ₋₁  δbarₖ] [ηₖ₋₁ ]   [0]
+      #                     [ηbarₖ]
+      if iter ≥ 3
+        ηₖ₋₂ = ζₖ₋₁
+        ωₖ₋₁ = ηₖ
+        ηₖ₋₁ = ηₖ₋₁ / δₖ₋₁
+        ωₖ   = -ϵₖ₋₂ * ηₖ₋₂ - λₖ₋₁ * ηₖ₋₁
+      end
 
-      # Stopping conditions that apply to both problems
+      # Relations for the directions dₖ₋₁ and d̅ₖ, the last two columns of D̅ₖ = UₖQₖ.
+      # Note: D̄ₖ represents the matrix P̄ₖ in the paper of USYMLQR.
+      # [d̅ₖ₋₁ uₖ] [cₖ  s̄ₖ] = [dₖ₋₁ d̅ₖ] ⟷ dₖ₋₁ = cₖ * d̅ₖ₋₁ + sₖ * uₖ
+      #           [sₖ -cₖ]             ⟷ d̅ₖ   = s̄ₖ * d̅ₖ₋₁ - cₖ * uₖ
+      if iter ≥ 2
+        # Compute solution yₖ.
+        # (yᴸ)ₖ₋₁ ← (yᴸ)ₖ₋₂ + ηₖ₋₁ * dₖ₋₁
+        @kaxpy!(n, ηₖ₋₁ * cₖ,  d̅, x)
+        @kaxpy!(n, ηₖ₋₁ * sₖ, uₖ, x)
+      end
+
+      # Compute d̅ₖ.
+      if iter == 1
+        # d̅₁ = u₁
+        @kcopy!(n, uₖ, d̅)  # d̅ ← vₖ
+      else
+        # d̅ₖ = s̄ₖ * d̅ₖ₋₁ - cₖ * uₖ
+        @kaxpby!(n, -cₖ, uₖ, conj(sₖ), d̅)
+      end
+
+      # Compute USYMLQ residual norm
+      # ‖rₖ‖ = √(|μₖ|² + |ωₖ|²)
+      if iter == 1
+        rNorm_lq = bNorm
+      else
+        μₖ = βₖ * (sₖ₋₁ * ζₖ₋₂ - cₖ₋₁ * cₖ * ζₖ₋₁) + αₖ * sₖ * ζₖ₋₁
+        ωₖ = βₖ₊₁ * sₖ * ζₖ₋₁
+        rNorm_lq = sqrt(abs2(μₖ) + abs2(ωₖ))
+      end
+      history && push!(rNorms, rNorm_lq)
+
+      # Compute USYMCG residual norm
+      # ‖rₖ‖ = |ρₖ|
+      if transfer_to_usymcg && (abs(δbarₖ) > eps(T))
+        ζbarₖ = ηₖ / δbarₖ
+        ρₖ = βₖ₊₁ * (sₖ * ζₖ₋₁ - cₖ * ζbarₖ)
+        rNorm_cg = abs(ρₖ)
+      end
+
+      # Compute zₖ.
+      @kaxpy!(n, -ηₖ, wₖ, zₖ)
+
+      # Compute uₖ₊₁ and vₖ₊₁.
+      @kcopy!(m, uₖ, uₖ₋₁)  # uₖ₋₁ ← uₖ
+      @kcopy!(n, vₖ, vₖ₋₁)  # vₖ₋₁ ← vₖ
+
+      if βₖ₊₁ ≠ zero(T)
+        uₖ .= q ./ βₖ₊₁ # βₖ₊₁uₖ₊₁ = q
+      end
+      if γₖ₊₁ ≠ zero(T)
+        vₖ .= p ./ γₖ₊₁ # γₖ₊₁vₖ₊₁ = p
+      end
+
+      # Update directions for x.
+      if iter ≥ 2
+        @kswap(wₖ₋₂, wₖ₋₁)
+      end
+
+      # Update sₖ₋₂, cₖ₋₂, sₖ₋₁, cₖ₋₁, ϕbarₖ, γₖ, βₖ.
+      if iter ≥ 2
+        sₖ₋₂ = sₖ₋₁
+        cₖ₋₂ = cₖ₋₁
+      end
+      sₖ₋₁  = sₖ
+      cₖ₋₁  = cₖ
+      ϕbarₖ = ϕbarₖ₊₁
+      γₖ    = γₖ₊₁
+      βₖ    = βₖ₊₁
+
+      # Update δbarₖ₋₁.
+      # δbarₖ₋₁ = δbarₖ
+
+      # Update stopping criterion.
       ill_cond_lim = one(T) / Acond ≤ ctol
       ill_cond_mach = one(T) + one(T) / Acond ≤ one(T)
       ill_cond = ill_cond_mach || ill_cond_lim
       tired = iter ≥ itmax
       solved = solved_LS && solved_LN
+
+      iter == 1 && (κ = atol + rtol * AᴴrNorm)
       user_requested_exit = callback(solver) :: Bool
+      solved = rNorm ≤ ε
+      solved_lq = rNorm_lq ≤ ε
+      solved_cg = transfer_to_usymcg && (abs(δbarₖ) > eps(T)) && (rNorm_cg ≤ ε)
+      inconsistent = !solved && AᴴrNorm ≤ κ
+      tired = iter ≥ itmax
       timer = time_ns() - start_time
       overtimed = timer > timemax_ns
+      kdisplay(iter, verbose) && @printf(iostream, "%7.1e\n", rNorm_lq)
+      kdisplay(iter, verbose) && @printf(iostream, "%4d %8.1e %7.1e %7.1e %7.1e %7.1e %7.1e ", iter, αₖ, βₖ, γₖ, Anorm, Acond, rNorm_qr)
+      kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %8.1e  %.2fs\n", iter, rNorm, AᴴrNorm, ktimer(start_time))
     end
     (verbose > 0) && @printf(iostream, "\n")
 
-    # Update status
+    # Compute USYMCG point
+    # (yᶜ)ₖ ← (yᴸ)ₖ₋₁ + ηbarₖ * d̅ₖ
+    # (zᶜ)ₖ ← (zᴸ)ₖ₋₁ - ηbarₖ * w̄ₖ
+    if solved_cg
+      @kaxpy!(n,  ηbarₖ, d̅, yₖ)
+      @kaxpy!(m, -ηbarₖ, w̄, zₖ)
+    end
+
+    # Termination status
     tired               && (status = "maximum number of iterations exceeded")
+    # solved_lq           && (status = "solution xᴸ good enough given atol and rtol")
+    # solved_cg           && (status = "solution xᶜ good enough given atol and rtol")
     solved              && (status = "solution good enough given atol and rtol")
     ill_cond_mach       && (status = "condition number seems too large for this machine")
     ill_cond_lim        && (status = "condition number exceeds tolerance")
     user_requested_exit && (status = "user-requested exit")
     overtimed           && (status = "time limit exceeded")
 
-    # Update x and y
-    warm_start && @kaxpy!(m, one(FC), Δx, xₖ)
-    warm_start && @kaxpy!(n, one(FC), Δy, yₖ)
+    # Compute the solution the saddle point system
+    # xₖ ← xₖ + zₖ
+    # yₖ ← yₖ + rₖ
+    @kaxpy!(n, one(FC), zₖ, xₖ)
+    @kaxpy!(m, one(FC), rₖ, yₖ)
+
+    # Update xₖ and yₖ
+    warm_start && @kaxpy!(n, one(FC), Δxz, xₖ)
+    warm_start && @kaxpy!(m, one(FC), Δyr, yₖ)
+    solver.warm_start = false
 
     # Update stats
     stats.niter = iter

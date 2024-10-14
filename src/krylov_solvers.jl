@@ -1190,7 +1190,6 @@ function CglsSolver(A, b)
 end
 
 """
-<<<<<<< HEAD
 Workspace for the in-place version of CGLS-LANCZOS-SHIFT.
 
 The outer constructors:
@@ -1251,10 +1250,7 @@ function CglsLanczosShiftSolver(A, b, nshifts)
 end
 
 """
-Type for storing the vectors required by the in-place version of CRLS.
-=======
 Workspace for the in-place version of CRLS.
->>>>>>> 914c73ea (An implementation of USYMLQR)
 
 The outer constructors:
 
@@ -1924,16 +1920,23 @@ can be used to initialize this workspace.
 mutable struct UsymlqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
   m          :: Int
   n          :: Int
+  r          :: S
   x          :: S
   y          :: S
-  M⁻¹vₖ₋₁    :: S
-  M⁻¹vₖ      :: S
-  N⁻¹uₖ₋₁    :: S
-  N⁻¹uₖ      :: S
+  z          :: S
+  M⁻¹uₖ₋₁    :: S
+  M⁻¹uₖ      :: S
+  N⁻¹vₖ₋₁    :: S
+  N⁻¹vₖ      :: S
   p          :: S
   q          :: S
-  vₖ         :: S
+  d̅          :: S
+  wₖ₋₂       :: S
+  wₖ₋₁       :: S
+  Δx         :: S
+  Δy         :: S
   uₖ         :: S
+  vₖ         :: S
   warm_start :: Bool
   stats      :: SimpleStats{T}
 end
@@ -1941,18 +1944,25 @@ end
 function UsymlqrSolver(m, n, S)
   FC      = eltype(S)
   T       = real(FC)
-  x       = S(undef, m)
-  y       = S(undef, n)
-  M⁻¹vₖ₋₁ = S(undef, m)
-  M⁻¹vₖ   = S(undef, m)
-  N⁻¹uₖ₋₁ = S(undef, n)
-  N⁻¹uₖ   = S(undef, n)
-  p       = S(undef, n)
+  r       = S(undef, m)
+  x       = S(undef, n)
+  y       = S(undef, m)
+  z       = S(undef, n)
+  M⁻¹uₖ₋₁ = S(undef, m)
+  M⁻¹uₖ   = S(undef, m)
+  N⁻¹vₖ₋₁ = S(undef, n)
+  N⁻¹vₖ   = S(undef, n)
   q       = S(undef, m)
-  vₖ      = S(undef, 0)
+  p       = S(undef, n)
+  d̅       = S(undef, m)
+  wₖ₋₂    = S(undef, n)
+  wₖ₋₁    = S(undef, n)
+  Δx      = S(undef, 0)
+  Δy      = S(undef, 0)
   uₖ      = S(undef, 0)
+  vₖ      = S(undef, 0)
   stats = SimpleStats(0, false, false, T[], T[], T[], 0.0, "unknown")
-  solver = UsymlqrSolver{T,FC,S}(m, n, x, y, M⁻¹vₖ₋₁, M⁻¹vₖ, N⁻¹uₖ₋₁, N⁻¹uₖ, p, q, vₖ, uₖ, false, stats)
+  solver = UsymlqrSolver{T,FC,S}(m, n, r, x, y, z, M⁻¹uₖ₋₁, M⁻¹uₖ, N⁻¹vₖ₋₁, N⁻¹vₖ, q, p, d̅, wₖ₋₂, wₖ₋₁, Δx, Δy, uₖ, vₖ, false, stats)
   return solver
 end
 

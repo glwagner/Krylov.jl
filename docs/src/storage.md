@@ -95,7 +95,7 @@ Each table summarizes the storage requirements of Krylov methods recommended to 
 
 | Methods  | [`TriCG`](@ref tricg) | [`TriMR`](@ref trimr) | [`USYMLQR`](@ref usymlqr) |
 |:--------:|:---------------------:|:---------------------:|:-------------------------:|
-| Storage  | $6n + 6m$             | $8n + 8m$             | $Xn + Ym$                 |
+| Storage  | $6n + 6m$             | $8n + 8m$             | $7n + 6m$                 |
 
 #### Generalized saddle-point and non-Hermitian partitioned systems
 
